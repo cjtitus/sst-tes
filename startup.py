@@ -12,10 +12,10 @@ from fly_tes import SimFlyableTES, FlyableTES
 RE = RunEngine({})
 
 
-from bluesky.callbacks.best_effort import BestEffortCallback
-bec = BestEffortCallback()
+#from bluesky.callbacks.best_effort import BestEffortCallback
+#bec = BestEffortCallback()
 
-RE.subscribe(bec)
+#RE.subscribe(bec)
 
 db = Broker.named('temp')
 
@@ -62,5 +62,5 @@ ftes._file_start()
 #RE(scan([det, tes], motor, -5, 5, 30))
 #RE(scan([det, tes1], motor, -5, 5, 30))
 RE(scan([det], motor, -5, 5, 30))
-RE(tes_scan([det], motor, -5, 5, 10))
+RE(tes_scan([det], motor, -5, 5, 10), LiveTable(['tfy'], stream_name='flytes'))
 #RE(bpp.fly_during_wrapper(scan([det], motor, -5, 5, 10), [ftes]))

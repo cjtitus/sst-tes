@@ -1,5 +1,6 @@
-from ophyd import DeviceStatus, Device, Component
+from ophyd import DeviceStatus, Device, Component, Kind
 from ophyd.signal import AttributeSignal, Signal
+from ophyd.utils.epics_pvs import data_type, data_shape
 import time as ttime
 import threading
 from queue import Queue, Empty
@@ -8,14 +9,17 @@ import itertools
 import json
 import socket
 
-class RCPSignal(Signal):
-    def __init__(self, rpc_method, name=None, parent=None, write_access=True):
+class RPCSignal(Signal):
+    def __init__(self, rpc_method=None, **kwargs):
         self.rpc_method = rpc_method
-        self.write_access = write_access
-        super().__init__(name=name, parent=parent)
+        super().__init__(**kwargs)
 
     def get(self, **kwargs):
-        return self.parent._sendrcv(self.rpc_method)
+        r = self.parent._sendrcv(self.rpc_method)
+        response = r['response']
+        success = r['success']
+        return response
+            
 
     def put(self, value, **kwargs):
         if not self.write_access:
@@ -31,12 +35,23 @@ class RCPSignal(Signal):
                 'dtype': data_type(value),
                 'shape': data_shape(value)}
         return {self.name: desc}
+    
+class RPCSignalRO(RPCSignal):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._metadata.update(write_access=False)
+
+    def put(self, value, **kwargs):
+        raise ReadOnlyError("The signal {} is readonly".format(self.name))
+
+    def set(self, value, **kwargs):
+        raise ReadOnlyError("The signal {} is readonly".format(self.name))
 
 class BaseFlyableTES(Device):
-    _mode = "uncalibrated"
+    _cal_flag = False
     _acquire_time = 1
-    mode = Component(AttributeSignal, '_mode', kind='config')
-    acquire_time = Component(AttributeSignal, '_acquire_time')
+    cal_flag = Component(AttributeSignal, '_cal_flag', kind=Kind.config)
+    acquire_time = Component(AttributeSignal, '_acquire_time', kind=Kind.config)
     
     def __init__(self, *args, verbose=False, **kwargs):
         self._hints = {'fields': ['tfy']}
@@ -118,6 +133,11 @@ class BaseFlyableTES(Device):
         self._log = {'var_name': motor, 'scan_num': scan_id, 'sample_id': sample_id, 'sample_desc': sample, 'extra': {'uid': uid}}
         return
 
+    def stop(self):
+        if self._completion_status is not None:
+            self._completion_status.set_finished()
+            
+
 class SimFlyableTES(BaseFlyableTES):
 
     def __init__(self, name, *args, **kwargs):
@@ -147,6 +167,10 @@ class SimFlyableTES(BaseFlyableTES):
         
 class FlyableTES(BaseFlyableTES):
     #calibrating = Component(Signal, kind='config', value=False)
+    filename = Component(RPCSignal, rpc_method="filename", kind=Kind.config)
+    calibration = Component(RPCSignal, rpc_method='calibration_state', kind=Kind.config)
+    state = Component(RPCSignal, rpc_method='state', kind=Kind.config)
+
     def __init__(self, name, address, port, *args, **kwargs):
         self.address = address
         self.port = port
@@ -158,30 +182,31 @@ class FlyableTES(BaseFlyableTES):
             msg["params"] = params
         return json.dumps(msg).encode()
 
+    """
     def _send(self, method, *params):
         msg = self._formatMsg(method, params)
         s = socket.socket()
         s.connect((self.address, self.port))
         s.send(msg)
         s.close()
-
+    """
+    
     def _sendrcv(self, method, *params):
         msg = self._formatMsg(method, params)
         s = socket.socket()
         s.connect((self.address, self.port))
         s.send(msg)
-        m = s.recv(1024).decode()
+        m = json.loads(s.recv(1024).decode())
         s.close()
         return m
 
     def _file_start(self, path='/tmp'):
-        self._send("file_start", path)
+        self._sendrcv("file_start", path)
 
     def _file_end(self):
-        self._send("file_end")
+        self._sendrcv("file_end")
 
     def _calibration_start(self):
-        if self.verbose: print(f"start calibration scan {scan_num}")
         var_name = self._log.get('var_name', 'mono')
         var_unit = 'eV'
         scan_num = self._log.get('scan_num', None)
@@ -189,16 +214,17 @@ class FlyableTES(BaseFlyableTES):
         sample_name = self._log.get('sample_desc', 'sample')
         extra = self._log.get('extra', {})
         routine = 'ssrl_10_1_mix'
+        if self.verbose: print(f"start calibration scan {scan_num}")
         self._sendrcv("calibration_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none', routine)
 
     def _scan_start(self):
-        if self.verbose: print(f"start scan {scan_num}")
         var_name = self._log.get('var_name', 'mono')
         var_unit = 'eV'
         scan_num = self._log.get('scan_num', 0)
         sample_id = self._log.get('sample_id', 1)
         sample_name = self._log.get('sample_desc', 'sample')
         extra = self._log.get('extra', {})
+        if self.verbose: print(f"start scan {scan_num}")
         self._sendrcv("scan_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none')        
 
     def _scan_point_start(self, var_val, t, extra={}):
@@ -232,20 +258,20 @@ class FlyableTES(BaseFlyableTES):
                 self._data.put(event)
                 self._instructions.task_done()
             except Empty:
-                print("_scan timeout")
+                if self.verbose: print("_scan timeout")
                 pass   
-        print("Exiting _scan thread")
+        if self.verbose: print("Exiting _scan thread")
         
     def kickoff(self):
-        if self.mode.get() != 'calibrating':
-            self._scan_start()
-        else:
+        if self.cal_flag.get():
             self._calibration_start()
+        else:
+            self._scan_start()
         return super().kickoff()
 
     def complete(self):
-        if self.mode.get() == 'calibrating':
-            self.mode.set('calibrated')
+        if self.cal_flag.get():
+            self.cal_flag.set(False)
         self._scan_end()
         return super().complete()
 
