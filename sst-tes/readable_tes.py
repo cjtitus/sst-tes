@@ -19,7 +19,7 @@ class TES(Device):
     filename = Component(RPCSignal, rpc_method="filename", kind=Kind.config)
     calibration = Component(RPCSignal, rpc_method='calibration_state', kind=Kind.config)
     state = Component(RPCSignal, rpc_method='state', kind=Kind.config)
-    spectrum = Component(ExternalFileReference, shape=[], kind="normal")
+    spectrum = Component(ExternalFileReference, shape=[1], kind="normal")
     scan_num = Component(RPCSignal, rpc_method='scan_num', kind=Kind.config)
     def __init__(self, name, address, port, *args, verbose=False, **kwargs):
         super().__init__(*args, name=name, **kwargs)
@@ -114,7 +114,7 @@ class TES(Device):
             spec="tes",
             root=root,
             resource_path=resource_path,
-            resource_kwargs={},
+            resource_kwargs={"shape":self.spectrum.shape},
         )
         self._resource.pop("run_start")
         self._asset_docs_cache.append(("resource", self._resource))
@@ -127,6 +127,7 @@ class TES(Device):
     
     def unstage(self):
         if self.verbose: print("Complete acquisition of TES")
+        self._scan_end()
         self._data_index = None
         self._log = {}
         self._resource = None

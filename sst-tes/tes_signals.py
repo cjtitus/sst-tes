@@ -50,7 +50,7 @@ class ExternalFileReference(Signal):
     def describe(self):
         res = super().describe()
         if self.shape == []:
-            dtype = 'integer'
+            dtype = 'number'
         else:
             dtype = 'array'
         res[self.name].update(

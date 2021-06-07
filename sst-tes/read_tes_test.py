@@ -7,9 +7,12 @@ from ophyd.sim import det, motor
 from databroker import Broker
 
 from readable_tes import TES
+from handlers import FakeHandler
 
 RE = RunEngine({})
 db = Broker.named('temp')
+db.reg.register_handler("tes", FakeHandler)
+
 RE.subscribe(db.insert)
 
 tes = TES('tes', "", 4000)
@@ -26,4 +29,5 @@ RE.preprocessors = [tpp]
 
 tes._file_start()
 tes.verbose = True
-RE(scan([det, tes], motor, -5, 5, 30))
+RE(scan([det, tes], motor, -5, 5, 10))
+run = db.v2[-1]
