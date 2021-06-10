@@ -2,7 +2,7 @@
 
 """The setup script."""
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(
     author="Charles Titus",
@@ -11,8 +11,10 @@ setup(
     name="sst_tes",
     entry_points={
         'databroker.handlers': [
-            "tes = handlers.FakeHandler",
+            "tes = sst_tes.handlers:SimpleHandler",
+            "tessim = sst_tes.handlers:FakeHandler",
             ]
         },
     version="0.1.0",
+    packages=find_packages()
 )

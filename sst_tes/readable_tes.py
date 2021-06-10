@@ -11,6 +11,52 @@ from os.path import join
 from tes_signals import RPCSignal, RPCSignalRO, ExternalFileReference
 from event_model import compose_resource
 
+class TESROI(Device):
+    roi = Component(ExternalFileReference, shape=[], kind="normal")
+    
+    def __init__(self, name, *args, **kwargs):
+        super().__init__(*args, name=name, **kwargs)
+        self._resource_path = None
+        self._asset_docs_cache = deque()
+        self._data_index = None
+
+    def stage(self):
+        self._data_index = itertools.count()
+        # compose_resource currently needs start argument with placeholder uid, but
+        # RunEngine replaces this uid with the real one for the run. In the future,
+        # start argument to compose_resource will be optional
+        self._resource, self._datum_factory, _ = compose_resource(
+            start={"uid": "temporary lie"},
+            spec="tes",
+            root=root,
+            resource_path=self._resource_path,
+            resource_kwargs={"shape":self.roi.shape},
+        )
+        self._resource.pop("run_start")
+        self._asset_docs_cache.append(("resource", self._resource))
+        return super().stage()
+
+    def unstage(self):
+        self._resource_path = None
+        self._data_index = None
+        self._resource = None
+        self._datum_factory = None
+        return super().unstage()
+
+    def trigger(self):
+        i = next(self._data_index)
+        datum = self._datum_factory(datum_kwargs={"index": i})
+        self._asset_docs_cache.append(("datum", datum))
+        self.roi.put(datum["datum_id"])
+        return
+        
+    def collect_asset_docs(self):
+        items = list(self._asset_docs_cache)
+        self._asset_docs_cache.clear()
+        for item in items:
+            yield item
+
+
 class TES(Device):
     _cal_flag = False
     _acquire_time = 1
@@ -19,7 +65,10 @@ class TES(Device):
     filename = Component(RPCSignal, rpc_method="filename", kind=Kind.config)
     calibration = Component(RPCSignal, rpc_method='calibration_state', kind=Kind.config)
     state = Component(RPCSignal, rpc_method='state', kind=Kind.config)
-    spectrum = Component(ExternalFileReference, shape=[1], kind="normal")
+    roi1 = Component(ExternalFileReference, shape=[], kind="normal")
+    roi2 = Component(ExternalFileReference, shape=[], kind="normal")
+    roi3 = Component(ExternalFileReference, shape=[], kind="normal")
+    roi4 = Component(ExternalFileReference, shape=[], kind="normal")
     scan_num = Component(RPCSignal, rpc_method='scan_num', kind=Kind.config)
     def __init__(self, name, address, port, *args, verbose=False, **kwargs):
         super().__init__(*args, name=name, **kwargs)
