@@ -13,6 +13,7 @@ from event_model import compose_resource
 
 class TESROI(Device):
     roi = Component(ExternalFileReference, shape=[], kind="normal")
+    roi_lims = Component(RPCSignalPair, "roi", kind='config')
     
     def __init__(self, name, *args, **kwargs):
         super().__init__(*args, name=name, **kwargs)
@@ -20,6 +21,11 @@ class TESROI(Device):
         self._asset_docs_cache = deque()
         self._data_index = None
 
+    def set(self, llim, ulim, name=None):
+        if name is not None:
+            self.name = name
+        self.roi_lims.put({self.name: (llim, ulim)})
+        
     def stage(self):
         self._data_index = itertools.count()
         # compose_resource currently needs start argument with placeholder uid, but
@@ -30,7 +36,7 @@ class TESROI(Device):
             spec="tes",
             root=root,
             resource_path=self._resource_path,
-            resource_kwargs={"shape":self.roi.shape},
+            resource_kwargs={"shape":self.roi.shape, "name": self.name},
         )
         self._resource.pop("run_start")
         self._asset_docs_cache.append(("resource", self._resource))
@@ -56,20 +62,37 @@ class TESROI(Device):
         for item in items:
             yield item
 
+class RPCClient:
+    def __init__(self, address, port):
+        self.address = address
+        self.port = port
 
+    def formatMsg(self, method, params):
+        msg = {"method": method}
+        if params is not None and params != []:
+            msg["params"] = params
+        return json.dumps(msg).encode()
+    
+    def sendrcv(self, method, *params):
+        msg = self.formatMsg(method, params)
+        s = socket.socket()
+        s.connect((self.address, self.port))
+        s.send(msg)
+        m = json.loads(s.recv(1024).decode())
+        s.close()
+        return m
+            
 class TES(Device):
     _cal_flag = False
     _acquire_time = 1
     cal_flag = Component(AttributeSignal, '_cal_flag', kind=Kind.config)
     acquire_time = Component(AttributeSignal, '_acquire_time', kind=Kind.config)
-    filename = Component(RPCSignal, rpc_method="filename", kind=Kind.config)
-    calibration = Component(RPCSignal, rpc_method='calibration_state', kind=Kind.config)
-    state = Component(RPCSignal, rpc_method='state', kind=Kind.config)
-    roi1 = Component(ExternalFileReference, shape=[], kind="normal")
-    roi2 = Component(ExternalFileReference, shape=[], kind="normal")
-    roi3 = Component(ExternalFileReference, shape=[], kind="normal")
-    roi4 = Component(ExternalFileReference, shape=[], kind="normal")
-    scan_num = Component(RPCSignal, rpc_method='scan_num', kind=Kind.config)
+    filename = Component(RPCSignal, "filename", kind=Kind.config)
+    calibration = Component(RPCSignal, 'calibration_state', kind=Kind.config)
+    state = Component(RPCSignal, 'state', kind=Kind.config)
+    roi1 = Component(TESROI, "roi1", shape=[], kind="normal")
+    roi2 = Component(TESROI, "roi2", shape=[], kind="normal")
+    scan_num = Component(RPCSignal, 'scan_num', kind=Kind.config)
     def __init__(self, name, address, port, *args, verbose=False, **kwargs):
         super().__init__(*args, name=name, **kwargs)
         self.address = address
@@ -78,31 +101,16 @@ class TES(Device):
         self._log = {}
         self._completion_status = None
         self.verbose = verbose
-        self._asset_docs_cache = deque()
+        self.rpc = RPCClient(address, port)
         
-    def _formatMsg(self, method, params):
-        msg = {"method": method}
-        if params is not None and params != []:
-            msg["params"] = params
-        return json.dumps(msg).encode()
-
-    def _sendrcv(self, method, *params):
-        msg = self._formatMsg(method, params)
-        s = socket.socket()
-        s.connect((self.address, self.port))
-        s.send(msg)
-        m = json.loads(s.recv(1024).decode())
-        s.close()
-        return m
-
     def _file_start(self, path='/tmp', force=False):
         if self.state.get() == "no_file" or force:
-            self._sendrcv("file_start", path)
+            self.rpc.sendrcv("file_start", path)
         else:
             print("TES already has file open, not forcing!")
 
     def _file_end(self):
-        self._sendrcv("file_end")
+        self.rpc.sendrcv("file_end")
 
     def _calibration_start(self):
         var_name = self._log.get('var_name', 'mono')
@@ -113,7 +121,7 @@ class TES(Device):
         extra = self._log.get('extra', {})
         routine = 'ssrl_10_1_mix'
         if self.verbose: print(f"start calibration scan {scan_num}")
-        self._sendrcv("calibration_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none', routine)
+        self.rpc.sendrcv("calibration_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none', routine)
 
     def _scan_start(self):
         var_name = self._log.get('var_name', 'mono')
@@ -123,16 +131,16 @@ class TES(Device):
         sample_name = self._log.get('sample_desc', 'sample')
         extra = self._log.get('extra', {})
         if self.verbose: print(f"start scan {scan_num}")
-        self._sendrcv("scan_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none')        
+        self.rpc.sendrcv("scan_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none')        
 
     def _scan_point_start(self, var_val, t, extra={}):
-        self._sendrcv("scan_point_start", var_val, extra, t)
+        self.rpc.sendrcv("scan_point_start", var_val, extra, t)
 
     def _scan_point_end(self, t):
-        self._sendrcv("scan_point_end", t)
+        self.rpc.sendrcv("scan_point_end", t)
 
     def _scan_end(self, try_post_processing=False):
-        self._sendrcv("scan_end", try_post_processing)
+        self.rpc.sendrcv("scan_end", try_post_processing)
 
     def _acquire(self, status, i):
         t1 = ttime.time()
@@ -149,11 +157,14 @@ class TES(Device):
 
     def stage(self):
         if self.verbose: print("Staging TES")
-        root = self._sendrcv("base_user_output_dir")['response']
-        beamtime_id = "beamtime_{}".format(self._sendrcv("beamtime_id")['response'])
+        root = self.rpc.sendrcv("base_user_output_dir")['response']
+        beamtime_id = "beamtime_{}".format(self.rpc.sendrcv("beamtime_id")['response'])
         scan_number = "scan_{}".format(self.scan_num.get())
         resource_path = join(beamtime_id, "pfy", scan_number)
+        self.roi1._resource_path = resource_path
+        self.roi2._resource_path = resource_path
         self._completion_status = DeviceStatus(self)
+        """
         self._data_index = itertools.count()
         # compose_resource currently needs start argument with placeholder uid, but
         # RunEngine replaces this uid with the real one for the run. In the future,
@@ -167,6 +178,7 @@ class TES(Device):
         )
         self._resource.pop("run_start")
         self._asset_docs_cache.append(("resource", self._resource))
+        """
         if self.cal_flag.get():
             self._calibration_start()
         else:
@@ -177,10 +189,7 @@ class TES(Device):
     def unstage(self):
         if self.verbose: print("Complete acquisition of TES")
         self._scan_end()
-        self._data_index = None
         self._log = {}
-        self._resource = None
-        self._datum_factory = None
         return super().unstage()
         
     def trigger(self):
@@ -206,10 +215,11 @@ class TES(Device):
         return
 
     def collect_asset_docs(self):
-        items = list(self._asset_docs_cache)
-        self._asset_docs_cache.clear()
-        for item in items:
-            yield item
+        devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)
+                   if hasattr(dev, 'collect_asset_docs')]
+        for dev in devices:
+            yield from dev.collect_asset_docs()
+            
             
     def stop(self):
         if self._completion_status is not None:
