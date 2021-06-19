@@ -5,56 +5,80 @@ import threading
 from queue import Queue, Empty
 from collections import OrderedDict, deque
 import itertools
-import json
-import socket
-from os.path import join
-from tes_signals import RPCSignal, RPCSignalRO, ExternalFileReference
+from os.path import join, relpath
+from .tes_signals import *
+from .rpc import RPCInterface
 from event_model import compose_resource
 
-class TESROI(Device):
-    roi = Component(ExternalFileReference, shape=[], kind="normal")
-    roi_lims = Component(RPCSignalPair, "roi", kind='config')
+
     
-    def __init__(self, name, *args, **kwargs):
-        super().__init__(*args, name=name, **kwargs)
-        self._resource_path = None
+class TESROI(Device, RPCInterface):
+    roi = Component(ExternalFileReference, shape=[], kind="normal")
+    roi_lims = Component(RPCSignalPairAuto, method="roi", kind='config')
+    def __init__(self, *args, **kwargs):
+        """
+        Call with ROI label as first argument
+        """
+        super().__init__(*args, **kwargs)
         self._asset_docs_cache = deque()
         self._data_index = None
+        self.label = self.prefix
+        self.roi_lims.get_args = [self.label]
 
-    def set(self, llim, ulim, name=None):
-        if name is not None:
-            self.name = name
-        self.roi_lims.put({self.name: (llim, ulim)})
+    def set(self, llim, ulim, label=None):
+        if label is not None:
+            self.label = label
+        else:
+            self.label = self.prefix
+        self.roi_lims.get_args = [self.label]
+        self.roi_lims.put({self.label: (llim, ulim)})
+        if llim is None or ulim is None:
+            self.disable()
+        else:
+            self.enable()
+        
+    def enable(self):
+        self.kind = Kind.normal
+
+    def disable(self):
+        self.kind = Kind.omitted
         
     def stage(self):
-        self._data_index = itertools.count()
-        # compose_resource currently needs start argument with placeholder uid, but
-        # RunEngine replaces this uid with the real one for the run. In the future,
-        # start argument to compose_resource will be optional
-        self._resource, self._datum_factory, _ = compose_resource(
-            start={"uid": "temporary lie"},
-            spec="tes",
-            root=root,
-            resource_path=self._resource_path,
-            resource_kwargs={"shape":self.roi.shape, "name": self.name},
-        )
-        self._resource.pop("run_start")
-        self._asset_docs_cache.append(("resource", self._resource))
-        return super().stage()
+        print("Staging", self.name)
+        if self.kind == Kind.omitted:
+            return super().stage()
+        else:
+            self._data_index = itertools.count()
+            root, resource_path = self._get_resource_paths()
+            # compose_resource currently needs start argument with placeholder uid, but
+            # RunEngine replaces this uid with the real one for the run. In the future,
+            # start argument to compose_resource will be optional
+            self._resource, self._datum_factory, _ = compose_resource(
+                start={"uid": "temporary lie"},
+                spec="tes",
+                root=root,
+                resource_path=resource_path,
+                resource_kwargs={"shape":self.roi.shape, "label": self.label},
+            )
+            self._resource.pop("run_start")
+            self._asset_docs_cache.append(("resource", self._resource))
+            return super().stage()
 
     def unstage(self):
-        self._resource_path = None
         self._data_index = None
         self._resource = None
         self._datum_factory = None
         return super().unstage()
 
     def trigger(self):
-        i = next(self._data_index)
-        datum = self._datum_factory(datum_kwargs={"index": i})
-        self._asset_docs_cache.append(("datum", datum))
-        self.roi.put(datum["datum_id"])
-        return
+        if self.kind == Kind.omitted:
+            return
+        else:
+            i = next(self._data_index)
+            datum = self._datum_factory(datum_kwargs={"index": i})
+            self._asset_docs_cache.append(("datum", datum))
+            self.roi.put(datum["datum_id"])
+            return
         
     def collect_asset_docs(self):
         items = list(self._asset_docs_cache)
@@ -62,92 +86,76 @@ class TESROI(Device):
         for item in items:
             yield item
 
-class RPCClient:
-    def __init__(self, address, port):
-        self.address = address
-        self.port = port
+    def _get_resource_paths(self):
+        root = self.rpc.base_user_output_dir()['response']
+        resource_full = self.rpc.get_pfy_output_file()['response']
+        resource_path = relpath(resource_full, start=root)
+        return root, resource_path
 
-    def formatMsg(self, method, params):
-        msg = {"method": method}
-        if params is not None and params != []:
-            msg["params"] = params
-        return json.dumps(msg).encode()
-    
-    def sendrcv(self, method, *params):
-        msg = self.formatMsg(method, params)
-        s = socket.socket()
-        s.connect((self.address, self.port))
-        s.send(msg)
-        m = json.loads(s.recv(1024).decode())
-        s.close()
-        return m
             
-class TES(Device):
+class TES(Device, RPCInterface):
     _cal_flag = False
     _acquire_time = 1
+
     cal_flag = Component(AttributeSignal, '_cal_flag', kind=Kind.config)
     acquire_time = Component(AttributeSignal, '_acquire_time', kind=Kind.config)
-    filename = Component(RPCSignal, "filename", kind=Kind.config)
-    calibration = Component(RPCSignal, 'calibration_state', kind=Kind.config)
-    state = Component(RPCSignal, 'state', kind=Kind.config)
-    roi1 = Component(TESROI, "roi1", shape=[], kind="normal")
-    roi2 = Component(TESROI, "roi2", shape=[], kind="normal")
-    scan_num = Component(RPCSignal, 'scan_num', kind=Kind.config)
-    def __init__(self, name, address, port, *args, verbose=False, **kwargs):
+    filename = Component(RPCSignal, method="filename", kind=Kind.config)
+    calibration = Component(RPCSignal, method='calibration_state', kind=Kind.config)
+    state = Component(RPCSignal, method='state', kind=Kind.config)
+    scan_num = Component(RPCSignal, method='scan_num', kind=Kind.config)
+    tfy = Component(TESROI, "tfy", kind="normal")
+    roi1 = Component(TESROI, "roi1", kind="omitted")
+    roi2 = Component(TESROI, "roi2", kind="omitted")
+    roi3 = Component(TESROI, "roi3", kind="omitted")
+    roi4 = Component(TESROI, "roi4", kind="omitted")
+    roi5 = Component(TESROI, "roi5", kind="omitted")
+    roi6 = Component(TESROI, "roi6", kind="omitted")
+    roi7 = Component(TESROI, "roi7", kind="omitted")
+    roi8 = Component(TESROI, "roi8", kind="omitted")
+    def __init__(self, name, *args, verbose=False, **kwargs):
         super().__init__(*args, name=name, **kwargs)
-        self.address = address
-        self.port = port
         self._hints = {}#{'fields': ['tfy']}
         self._log = {}
         self._completion_status = None
+        self._save_roi = False
         self.verbose = verbose
-        self.rpc = RPCClient(address, port)
         
     def _file_start(self, path='/tmp', force=False):
         if self.state.get() == "no_file" or force:
-            self.rpc.sendrcv("file_start", path)
+            self.rpc.file_start(path)
         else:
             print("TES already has file open, not forcing!")
 
     def _file_end(self):
-        self.rpc.sendrcv("file_end")
+        self.rpc.file_end()
 
     def _calibration_start(self):
-        var_name = self._log.get('var_name', 'mono')
-        var_unit = 'eV'
-        scan_num = self._log.get('scan_num', None)
-        sample_id = self._log.get('sample_id', 1)
-        sample_name = self._log.get('sample_desc', 'sample')
-        extra = self._log.get('extra', {})
+        var_name = "motor"
+        var_unit = "index"
+        scan_num = self.scan_num.get()
+        sample_id = 1
+        sample_name = 'cal'
         routine = 'ssrl_10_1_mix'
         if self.verbose: print(f"start calibration scan {scan_num}")
-        self.rpc.sendrcv("calibration_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none', routine)
+        self.rpc.calibration_start(var_name, var_unit, scan_num, sample_id, sample_name, routine)
 
     def _scan_start(self):
-        var_name = self._log.get('var_name', 'mono')
-        var_unit = 'eV'
-        scan_num = self._log.get('scan_num', 0)
-        sample_id = self._log.get('sample_id', 1)
-        sample_name = self._log.get('sample_desc', 'sample')
-        extra = self._log.get('extra', {})
+        var_name = "motor"
+        var_unit = "index"
+        scan_num = self.scan_num.get()
+        sample_id = 1
+        sample_name = 'sample'
         if self.verbose: print(f"start scan {scan_num}")
-        self.rpc.sendrcv("scan_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none')        
-
-    def _scan_point_start(self, var_val, t, extra={}):
-        self.rpc.sendrcv("scan_point_start", var_val, extra, t)
-
-    def _scan_point_end(self, t):
-        self.rpc.sendrcv("scan_point_end", t)
-
-    def _scan_end(self, try_post_processing=False):
-        self.rpc.sendrcv("scan_end", try_post_processing)
-
+        self.rpc.scan_start(var_name, var_unit, scan_num, sample_id, sample_name)
+        
     def _acquire(self, status, i):
         t1 = ttime.time()
         t2 = t1 + self.acquire_time.get()
-        self._scan_point_start(i, t1)
+        self.rpc.scan_point_start(i, t1)
         ttime.sleep(self.acquire_time.get())
-        self._scan_point_end(t2)
+        self.rpc.scan_point_end(t2)
+        if self._save_roi:
+            self.rpc.roi_save_counts()
         status.set_finished()
         return
 
@@ -157,28 +165,11 @@ class TES(Device):
 
     def stage(self):
         if self.verbose: print("Staging TES")
-        root = self.rpc.sendrcv("base_user_output_dir")['response']
-        beamtime_id = "beamtime_{}".format(self.rpc.sendrcv("beamtime_id")['response'])
-        scan_number = "scan_{}".format(self.scan_num.get())
-        resource_path = join(beamtime_id, "pfy", scan_number)
-        self.roi1._resource_path = resource_path
-        self.roi2._resource_path = resource_path
-        self._completion_status = DeviceStatus(self)
-        """
         self._data_index = itertools.count()
-        # compose_resource currently needs start argument with placeholder uid, but
-        # RunEngine replaces this uid with the real one for the run. In the future,
-        # start argument to compose_resource will be optional
-        self._resource, self._datum_factory, _ = compose_resource(
-            start={"uid": "temporary lie"},
-            spec="tes",
-            root=root,
-            resource_path=resource_path,
-            resource_kwargs={"shape":self.spectrum.shape},
-        )
-        self._resource.pop("run_start")
-        self._asset_docs_cache.append(("resource", self._resource))
-        """
+        self._completion_status = DeviceStatus(self)
+        self._external_devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)
+                                  if hasattr(dev, 'collect_asset_docs')]
+
         if self.cal_flag.get():
             self._calibration_start()
         else:
@@ -188,17 +179,19 @@ class TES(Device):
     
     def unstage(self):
         if self.verbose: print("Complete acquisition of TES")
-        self._scan_end()
+        self.rpc.scan_end(_try_post_processing=False)
         self._log = {}
+        self._data_index = None
+        self._external_devices = None
         return super().unstage()
         
     def trigger(self):
         if self.verbose: print("Triggering TES")
-        i = next(self._data_index)
-        datum = self._datum_factory(datum_kwargs={"index": i})
-        self._asset_docs_cache.append(("datum", datum))
-        self.spectrum.put(datum["datum_id"])
+        for dev in self._external_devices:
+            dev.trigger()
+
         status = DeviceStatus(self)
+        i = next(self._data_index)
         threading.Thread(target=self._acquire, args=(status, i), daemon=True).start()
         return status
         
@@ -215,13 +208,26 @@ class TES(Device):
         return
 
     def collect_asset_docs(self):
-        devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)
-                   if hasattr(dev, 'collect_asset_docs')]
-        for dev in devices:
+        for dev in self._external_devices:
             yield from dev.collect_asset_docs()
-            
             
     def stop(self):
         if self._completion_status is not None:
             self._completion_status.set_finished()
             
+class SIMTES(TES):
+    def __init__(self, name, motor, motor_field, *args, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self._motor = motor
+        self._motor_field = motor_field
+
+    def _acquire(self, status, i):
+        t1 = self._motor.read()[self._motor_field]['value']
+        t2 = t1 + self.acquire_time.get()
+        self.rpc.scan_point_start(i, t1)
+        ttime.sleep(self.acquire_time.get())
+        self.rpc.scan_point_end(t2)
+        if self._save_roi:
+            self.rpc.roi_save_counts()
+        status.set_finished()
+        return

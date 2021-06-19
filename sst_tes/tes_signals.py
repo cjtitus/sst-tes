@@ -1,64 +1,66 @@
 from ophyd.signal import Signal
 from ophyd.utils.epics_pvs import data_type, data_shape
+from .rpc import RPCInterface
+import time as ttime
 
-class RPCSignal(Signal):
-    def __init__(self, rpc_method, **kwargs):
-        super().__init__(**kwargs)
-        self.rpc_get = rpc_method
-        self.rpc_set = rpc_method
-        self.rpc = self._get_comm_function()
-
-    def _get_comm_function(self, parent=None):
-        if parent is None:
-            parent = self.parent
-        if hasattr(parent, "rpc"):
-            return parent.rpc
-        elif hasattr(parent, "parent"):
-            return self._get_comm_function(parent=parent.parent)
-        else:
-            raise IOError
+class RPCSignalPair(Signal, RPCInterface):
+    def __init__(self, *args, get_method, set_method, get_args=[], set_args=[],**kwargs):
+        """
+        A signal to define an RPC get/set pair
+        """
+        super().__init__(*args, **kwargs)
+        self.rpc_get = get_method
+        self.rpc_set = set_method
+        self.get_args = get_args
+        self.set_args = set_args
         
     def get(self, **kwargs):
-        r = self.rpc.sendrcv(self.rpc_get)
+        r = self.rpc.sendrcv(self.rpc_get, *self.get_args)
         response = r['response']
         success = r['success']
         return response
-            
+        
     def put(self, value, **kwargs):
         if not self.write_access:
             raise ReadOnlyError("RPCSignal is marked as read-only")
         old_value = self.get()
-        self.rpc.sendrcv(self.rpc_set, value)
+        _ = self.rpc.sendrcv(self.rpc_set, value, *self.set_args)
         self._run_subs(sub_type=self.SUB_VALUE, old_value=old_value,
                        value=value, timestamp=ttime.time())
 
     def describe(self):
         value = self.get()
-        desc = {'source': 'RPC:{}:{}/{}'.format(self.rpc.address, self.rpc.port, self.rpc_get),
+        desc = {'source': '{}/{}'.format(self.describe_rpc(), self.rpc_get),
                 'dtype': data_type(value),
-                'shape': data_shape(value)}
+                'shape': data_shape(value),
+                'get_args': self.get_args,
+                'set_args': self.set_args}
         return {self.name: desc}
 
-class RPCSignalPair(RPCSignal):
-    def __init__(self, rpc_method, get_args=None, get_kwargs=None, **kwargs):
-        super().__init__(rpc_method, **kwargs)
-        self.rpc_get = rpc_method + '_get'
-        self.rpc_set = rpc_method + '_set'
-        self.get_args = get_args
-        self.get_kwargs = get_kwargs
+class RPCSignalPairAuto(RPCSignalPair):
+    """
+    Convenience class for the common case where the 'get' and 'set' method names share a
+    common stem, with '_get' and '_set' appended.
+    """
+    def __init__(self, *args, method, **kwargs):
+        get_method = method + '_get'
+        set_method = method + '_set'
+        super().__init__(*args, get_method=get_method, set_method=set_method, **kwargs)
         
-    def get(self, **kwargs):
-        r = self.rpc.sendrcv(self.rpc_get, *self.get_args, **self.get_kwargs)
-
-    def describe(self):
-        desc = super().describe()
-        if self.get_args is not None:
-            desc['args': self.get_args]
-        if self.get_kwargs is not None:
-            desc['kwargs': self.get_kwargs]
-        return desc
+class RPCSignal(RPCSignalPair):
+    """
+    Convenience class for the common case where the 'get' and 'set' methods are identical,
+    and behavior is controlled by whether or not a value is passed in
+    """
+    def __init__(self, *args, method, **kwargs):
+        print("Initializing", method)
+        super().__init__(*args, get_method=method, set_method=method, **kwargs)
+        
         
 class RPCSignalRO(RPCSignal):
+    """
+    Convenience class for read-only signals
+    """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._metadata.update(write_access=False)

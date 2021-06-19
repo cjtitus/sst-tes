@@ -17,7 +17,6 @@ models = []
 import importlib
 
 from bluesky_widgets.models.auto_plot_builders import AutoPlotter
-from bluesky_widgets.models.plot_specs import Axes, Figure
 
 class AutoTESPlot(AutoPlotter):
     
@@ -26,11 +25,10 @@ class AutoTESPlot(AutoPlotter):
             return
 
         xx = run.metadata['start']['motors'][0]
-        axes1 = Axes()
-        axes2 = Axes()
-        figure = Figure((axes1, axes2), title='It and I0')
-        model = Lines(x=xx, ys=['tes_spectrum'], max_runs=3)
-
+        detector = run.metadata['start'].get('detector', 'tes')
+        label = run.metadata['start'].get('roi_select', 'tfy')
+        yy = f"{detector}_{label}_roi"
+        model = Lines(x=xx, ys=[yy], max_runs=3)
         model.add_run(run)
         self.figures.append(model.figure) 
         self.plot_builders.append(model) 
