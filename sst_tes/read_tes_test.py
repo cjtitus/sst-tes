@@ -20,12 +20,9 @@ db = Broker.named('temp')
 
 publisher = Publisher('localhost:4001')
 
-runs = []
+
 RE.subscribe(db.insert)
-RE.subscribe(stream_documents_into_runs(runs.append))
 RE.subscribe(publisher)
-
-
 
 def TESPreprocessor(tes):
     def _log_tes_wrapper(plan):
@@ -34,7 +31,7 @@ def TESPreprocessor(tes):
     return _log_tes_wrapper
 
 def stream_to_figures(fig, ax):
-            
+    
     def update_plot(event):
         print("Update plot called")
         run = event.run

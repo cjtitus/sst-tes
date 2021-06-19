@@ -22,7 +22,8 @@ class MWEROI(Device, RPCInterface):
         self._asset_docs_cache = deque()
         self._data_index = None
         self.label = self.prefix
-
+        self.roi_lims.get_args = [self.label]
+        
     def set(self, llim, ulim, label=None):
         if label is not None:
             self.label = label
@@ -146,3 +147,5 @@ class MWETES(Device, RPCInterface):
     def stop(self):
         if self._completion_status is not None:
             self._completion_status.set_finished()
+
+            
