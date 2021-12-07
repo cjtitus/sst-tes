@@ -170,6 +170,9 @@ class TES(Device, RPCInterface):
         self._external_devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)
                                   if hasattr(dev, 'collect_asset_docs')]
 
+        if self.state.get() == "no_file":
+            raise ValueError(f"{self.name} has no file open, cannot stage.")
+        
         if self.cal_flag.get():
             self._calibration_start()
         else:
