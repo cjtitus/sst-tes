@@ -11,17 +11,13 @@ from .rpc import RPCInterface
 from event_model import compose_resource
 
 
-    
-class TESROI(Device, RPCInterface):
-    roi = Component(ExternalFileReference, shape=[], kind="normal")
+class TESROIBase(Device, RPCInterface):
     roi_lims = Component(RPCSignalPairAuto, method="roi", kind='config')
     def __init__(self, *args, **kwargs):
         """
         Call with ROI label as first argument
         """
         super().__init__(*args, **kwargs)
-        self._asset_docs_cache = deque()
-        self._data_index = None
         self.label = self.prefix
         self.roi_lims.get_args = [self.label]
 
@@ -42,6 +38,13 @@ class TESROI(Device, RPCInterface):
 
     def disable(self):
         self.kind = Kind.omitted
+
+class TESROIext(TESROIBase):
+    roi = Component(ExternalFileReference, shape=[], kind="normal")
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._asset_docs_cache = deque()
+        self._data_index = None
         
     def stage(self):
         print("Staging", self.name)
@@ -103,15 +106,17 @@ class TES(Device, RPCInterface):
     calibration = Component(RPCSignal, method='calibration_state', kind=Kind.config)
     state = Component(RPCSignal, method='state', kind=Kind.config)
     scan_num = Component(RPCSignal, method='scan_num', kind=Kind.config)
-    tfy = Component(TESROI, "tfy", kind="normal")
-    roi1 = Component(TESROI, "roi1", kind="omitted")
-    roi2 = Component(TESROI, "roi2", kind="omitted")
-    roi3 = Component(TESROI, "roi3", kind="omitted")
-    roi4 = Component(TESROI, "roi4", kind="omitted")
-    roi5 = Component(TESROI, "roi5", kind="omitted")
-    roi6 = Component(TESROI, "roi6", kind="omitted")
-    roi7 = Component(TESROI, "roi7", kind="omitted")
-    roi8 = Component(TESROI, "roi8", kind="omitted")
+    """
+    tfy = Component(TESROIext, "tfy", kind="normal")
+    roi1 = Component(TESROIext, "roi1", kind="omitted")
+    roi2 = Component(TESROIext, "roi2", kind="omitted")
+    roi3 = Component(TESROIext, "roi3", kind="omitted")
+    roi4 = Component(TESROIext, "roi4", kind="omitted")
+    roi5 = Component(TESROIext, "roi5", kind="omitted")
+    roi6 = Component(TESROIext, "roi6", kind="omitted")
+    roi7 = Component(TESROIext, "roi7", kind="omitted")
+    roi8 = Component(TESROIext, "roi8", kind="omitted")
+    """
     def __init__(self, name, *args, verbose=False, **kwargs):
         super().__init__(*args, name=name, **kwargs)
         self._hints = {}#{'fields': ['tfy']}
@@ -119,10 +124,15 @@ class TES(Device, RPCInterface):
         self._completion_status = None
         self._save_roi = False
         self.verbose = verbose
+        self.file_mode = "continuous" # Or "continuous"
+        self.write_ljh = True
+        self.write_off = True
+        self.rois = {"tfy": (0, 1200)}
+        self.last_time = 0
         
-    def _file_start(self, path='/tmp', force=False):
+    def _file_start(self, path=None, force=False):
         if self.state.get() == "no_file" or force:
-            self.rpc.file_start(path)
+            self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off)
         else:
             print("TES already has file open, not forcing!")
 
@@ -135,7 +145,7 @@ class TES(Device, RPCInterface):
         scan_num = self.scan_num.get()
         sample_id = 1
         sample_name = 'cal'
-        routine = 'ssrl_10_1_mix'
+        routine = 'simulated_source'
         if self.verbose: print(f"start calibration scan {scan_num}")
         self.rpc.calibration_start(var_name, var_unit, scan_num, sample_id, sample_name, routine)
 
@@ -149,16 +159,42 @@ class TES(Device, RPCInterface):
         self.rpc.scan_start(var_name, var_unit, scan_num, sample_id, sample_name)
         
     def _acquire(self, status, i):
-        t1 = ttime.time()
-        t2 = t1 + self.acquire_time.get()
-        self.rpc.scan_point_start(i, t1)
+        #t1 = ttime.time()
+        #t2 = t1 + self.acquire_time.get()
+        self.rpc.scan_point_start(i)
         ttime.sleep(self.acquire_time.get())
-        self.rpc.scan_point_end(t2)
-        if self._save_roi:
-            self.rpc.roi_save_counts()
+        self.rpc.scan_point_end()
+        self.last_time = ttime.time()
         status.set_finished()
         return
 
+    def set_roi(self, label, llim, ulim):
+        self.rois[label] = (llim, ulim)
+        self.rpc.roi_set({label: (llim, ulim)})
+
+    def clear_roi(self, label):
+        self.rois.pop(label)
+        self.rpc.roi_set({label: (None, None)})
+        
+    def read(self):
+        d = super().read()
+        rois = self.rpc.roi_get_counts()['response']
+        for k in self.rois:
+            key = self.name + "_" + k
+            val = rois[k]
+            d[key] = {"value": val, "timestamp": self.last_time}
+        return d
+    
+    
+    def describe(self):
+        d = super().describe()
+        for k in self.rois:
+            key = self.name + "_" + k
+            d[key] = {"dtype": "number", "shape": [], "source": key,
+                      "llim": self.rois[k][0], "ulim": self.rois[k][1]}
+        return d
+    
+    
     @property
     def hints(self):
         return self._hints
@@ -169,6 +205,9 @@ class TES(Device, RPCInterface):
         self._completion_status = DeviceStatus(self)
         self._external_devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)
                                   if hasattr(dev, 'collect_asset_docs')]
+        
+        if self.file_mode == "start_stop":
+            self._file_start()
 
         if self.state.get() == "no_file":
             raise ValueError(f"{self.name} has no file open, cannot stage.")
@@ -183,6 +222,8 @@ class TES(Device, RPCInterface):
     def unstage(self):
         if self.verbose: print("Complete acquisition of TES")
         self.rpc.scan_end(_try_post_processing=False)
+        if self.file_mode == "start_stop":
+            self._file_end()
         self._log = {}
         self._data_index = None
         self._external_devices = None

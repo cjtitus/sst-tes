@@ -7,27 +7,28 @@ from queue import Queue, Empty
 from collections import OrderedDict
 import itertools
 import json
-import socket
-from tes_signals import RPCSignal, RPCSignalRO
+from sst_tes.tes import TESBase
 
-class BaseFlyableTES(Device):
-    _cal_flag = False
-    _acquire_time = 1
-    cal_flag = Component(AttributeSignal, '_cal_flag', kind=Kind.config)
-    acquire_time = Component(AttributeSignal, '_acquire_time', kind=Kind.config)
-    
-    def __init__(self, *args, verbose=False, **kwargs):
-        self._hints = {'fields': ['tfy']}
-        self._log = {}
-        self._completion_status = None
-        self.verbose = verbose
-        super().__init__(*args, **kwargs)
-        
-    @property
-    def hints(self):
-        return self._hints
-
+class FlyableTES(TESBase):    
     def kickoff(self):
+        if self.cal_flag.get():
+            self._calibration_start()
+        else:
+            self._scan_start()
+        return super().kickoff()
+
+    def complete(self):
+        if self.cal_flag.get():
+            self.cal_flag.set(False)
+        self._scan_end()
+        return super().complete()
+
+    
+    def kickoff(self):
+        if self.cal_flag.get():
+            self._calibration_start()
+        else:
+            self._scan_start()
         if self.verbose: print("Kicking off TES")
         self._data_index = itertools.count()
         if self._completion_status is not None and not self._completion_status.done:
@@ -45,6 +46,10 @@ class BaseFlyableTES(Device):
         return kickoff_st
 
     def complete(self):
+        if self.cal_flag.get():
+            self.cal_flag.set(False)
+        self.rpc.scan_end(_try_post_processing=False)
+
         if self.verbose: print("Complete acquisition of TES")
         self._data_index = None
         if self._completion_status is None:
@@ -77,28 +82,6 @@ class BaseFlyableTES(Device):
         dd = OrderedDict({'tfy': {'source': 'TES_Detector', 'dtype': 'number', 'shape': []}})
         return {self.name: dd}
         
-    def trigger(self):
-        if self.verbose: print("Triggering flyable TES")
-        i = next(self._data_index)
-        status = DeviceStatus(self)
-        threading.Thread(target=self._acquire, args=(status, i), daemon=True).start()
-        return status
-        
-    def start_log(self, doc_name, document):
-        #if self.name in document.get('detectors', []):
-        if self.verbose: print(f"Found {self.name} in start")
-        motor = document.get('motors', None)[0]
-        sample = document.get('sample', 'sample')
-        sample_id = document.get('sample_id', '0')
-        uid = document.get('uid', None)
-        scan_id = document.get('scan_id')
-        print(motor, scan_id, sample_id, sample, uid)
-        self._log = {'var_name': motor, 'scan_num': scan_id, 'sample_id': sample_id, 'sample_desc': sample, 'extra': {'uid': uid}}
-        return
-
-    def stop(self):
-        if self._completion_status is not None:
-            self._completion_status.set_finished()
             
 
 class SimFlyableTES(BaseFlyableTES):
@@ -225,17 +208,5 @@ class FlyableTES(BaseFlyableTES):
                 pass   
         if self.verbose: print("Exiting _scan thread")
         
-    def kickoff(self):
-        if self.cal_flag.get():
-            self._calibration_start()
-        else:
-            self._scan_start()
-        return super().kickoff()
-
-    def complete(self):
-        if self.cal_flag.get():
-            self.cal_flag.set(False)
-        self._scan_end()
-        return super().complete()
 
 
