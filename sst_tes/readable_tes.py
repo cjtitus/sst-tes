@@ -9,7 +9,7 @@ from os.path import join, relpath
 from .tes_signals import *
 from .rpc import RPCInterface
 from event_model import compose_resource
-
+from .tes import TESBase
 
 class TESROIBase(Device, RPCInterface):
     roi_lims = Component(RPCSignalPairAuto, method="roi", kind='config')
@@ -95,8 +95,49 @@ class TESROIext(TESROIBase):
         resource_path = relpath(resource_full, start=root)
         return root, resource_path
 
-            
-class TES(Device, RPCInterface):
+
+class TES(TESBase):
+    def read(self):
+        d = super().read()
+        if self.write_off:
+            rois = self.rpc.roi_get_counts()['response']
+            for k in self.rois:
+                key = self.name + "_" + k
+                val = rois[k]
+                d[key] = {"value": val, "timestamp": self.last_time}
+        return d
+    
+    def stage(self):
+        if self.verbose: print("Staging TES")
+        self._data_index = itertools.count()
+        self._completion_status = DeviceStatus(self)
+        self._external_devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)
+                                  if hasattr(dev, 'collect_asset_docs')]
+        
+        if self.file_mode == "start_stop":
+            self._file_start()
+
+        if self.state.get() == "no_file":
+            raise ValueError(f"{self.name} has no file open, cannot stage.")
+        
+        if self.cal_flag.get():
+            self._calibration_start()
+        else:
+            self._scan_start()
+
+        return super().stage()
+    
+    def unstage(self):
+        if self.verbose: print("Complete acquisition of TES")
+        self._scan_end()
+        if self.file_mode == "start_stop":
+            self._file_end()
+        self._log = {}
+        self._data_index = None
+        self._external_devices = None
+        return super().unstage()
+    
+class OLDTES(Device, RPCInterface):
     _cal_flag = False
     _acquire_time = 1
 
@@ -227,6 +268,7 @@ class TES(Device, RPCInterface):
         self._log = {}
         self._data_index = None
         self._external_devices = None
+        self.cal_flag.put(False)
         return super().unstage()
         
     def trigger(self):

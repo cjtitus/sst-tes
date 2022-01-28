@@ -192,6 +192,11 @@ class FlyableTES(BaseFlyableTES):
         return
 
     def _scan(self):
+        # TES will send all data that hasn't been sent that
+        # is probably current.
+        # We need to ask TES for data, and increment counter for
+        # All data that is sent back
+        # We are done when we have as much data as was taken
         while not self._collection_status.done:
             try:
                 t = self._instructions.get(timeout=5)
