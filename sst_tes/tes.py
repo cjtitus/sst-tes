@@ -35,7 +35,7 @@ class TESBase(Device, RPCInterface):
         self.last_time = 0
         self.path = path
         self.scanexfiltrator = None
-        
+
     def _file_start(self, path=None, force=False):
         if path is None:
             path = self.path
@@ -74,11 +74,11 @@ class TESBase(Device, RPCInterface):
         start_energy = scaninfo.get("start_energy", -1)
         if self.verbose: print(f"start scan {scan_num}")
         self.rpc.scan_start(var_name, var_unit, sample_id, sample_name, extra={"start_energy": start_energy})
-        
+
     def _scan_end(self):
         self.rpc.scan_end(_try_post_processing=False)
         self.scanexfiltrator = None
-        
+
     def _acquire(self, status, i):
         #t1 = ttime.time()
         #t2 = t1 + self.acquire_time.get()
@@ -102,7 +102,7 @@ class TESBase(Device, RPCInterface):
         ttime.sleep(time)
         self._file_end()
         self.rpc.set_pulse_triggers()
-        
+
     def set_roi(self, label, llim, ulim):
         self.rois[label] = (llim, ulim)
         self.rpc.roi_set({label: (llim, ulim)})
