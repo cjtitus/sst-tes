@@ -34,13 +34,22 @@ class TESBase(Device, RPCInterface):
         self.rois = {"tfy": (0, 1200)}
         self.last_time = 0
         self.path = path
+        self.setFilenamePattern=True
         self.scanexfiltrator = None
 
     def _file_start(self, path=None, force=False):
+        """
+        Starts file writing. If self.setFilenamePattern,
+        path should be something that can be formatted by datetime.strftime,
+        i.e., /nsls2/data/sst1/legacy/ucal/raw/%Y/%m/%d
+        This should certainly be the default, and file_start should not generally be called
+        with arguments
+        """
+        
         if path is None:
             path = self.path
         if self.state.get() == "no_file" or force:
-            self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off)
+            self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off, setFilenamePattern=self.setFilenamePattern)
         else:
             print("TES already has file open, not forcing!")
 
