@@ -96,10 +96,11 @@ class TESBase(Device, RPCInterface):
         else:
             val = i
 
-        self.rpc.scan_point_start(val)
+        last_time = self.rpc.scan_point_start(val)['response']
+        self.last_time = float(last_time)
         ttime.sleep(self.acquire_time.get())
         self.rpc.scan_point_end()
-        self.last_time = ttime.time()
+        #self.last_time = ttime.time()
         status.set_finished()
         return
 
@@ -107,11 +108,19 @@ class TESBase(Device, RPCInterface):
         self.rpc.set_noise_triggers()
         if path is None:
             path = self.path
-        self.rpc.file_start(path, write_ljh=True, write_off=False)
+        self.rpc.file_start(path, write_ljh=True, write_off=False, setFilenamePattern=self.setFilenamePattern)
         ttime.sleep(time)
         self._file_end()
         self.rpc.set_pulse_triggers()
 
+    def take_projectors(self, path=None, time=60):
+        self.rpc.set_pulse_triggers()
+        if path is None:
+            path = self.path
+        self.rpc.file_start(path, write_ljh=True, write_off=False, setFilenamePattern=self.setFilenamePattern)
+        ttime.sleep(time)
+        self._file_end()
+        
     def set_roi(self, label, llim, ulim):
         self.rois[label] = (llim, ulim)
         self.rpc.roi_set({label: (llim, ulim)})
