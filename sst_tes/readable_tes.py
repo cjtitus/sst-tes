@@ -32,7 +32,7 @@ class TESROIBase(Device, RPCInterface):
             self.disable()
         else:
             self.enable()
-        
+
     def enable(self):
         self.kind = Kind.normal
 
@@ -119,8 +119,9 @@ class TES(TESBase):
             self._file_start()
 
         if self.state.get() == "no_file":
-            raise ValueError(f"{self.name} has no file open, cannot stage.")
-        
+            self._file_start()
+            # raise ValueError(f"{self.name} has no file open, cannot stage.")
+
         if self.cal_flag.get():
             self._calibration_start()
         else:
