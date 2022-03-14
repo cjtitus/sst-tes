@@ -20,22 +20,23 @@ class TESBase(Device, RPCInterface):
     calibration = Component(RPCSignal, method='calibration_state', kind=Kind.config)
     state = Component(RPCSignal, method='state', kind=Kind.config)
     scan_num = Component(RPCSignal, method='scan_num', kind=Kind.config)
+    scan_str = Component(RPCSignal, method='scan_str', kind=Kind.config)
 
     def __init__(self, name, *args, verbose=False, path=None, **kwargs):
         super().__init__(*args, name=name, **kwargs)
-        self._hints = {}#{'fields': ['tfy']}
+        self._hints = {}  # {'fields': ['tfy']}
         self._log = {}
         self._completion_status = None
         self._save_roi = False
         self.verbose = verbose
-        self.file_mode = "continuous" # Or "continuous"
+        self.file_mode = "continuous"  # Or "start_stop"
         self.write_ljh = True
         self.write_off = True
         self.rois = {"tfy": (0, 1200)}
         self.last_time = 0
         self.path = path
         self.scanexfiltrator = None
-        
+
     def _file_start(self, path=None, force=False):
         if path is None:
             path = self.path
@@ -78,7 +79,7 @@ class TESBase(Device, RPCInterface):
     def _scan_end(self):
         self.rpc.scan_end(_try_post_processing=False)
         self.scanexfiltrator = None
-        
+
     def _acquire(self, status, i):
         #t1 = ttime.time()
         #t2 = t1 + self.acquire_time.get()
