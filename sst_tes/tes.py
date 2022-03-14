@@ -35,13 +35,22 @@ class TESBase(Device, RPCInterface):
         self.rois = {"tfy": (0, 1200)}
         self.last_time = 0
         self.path = path
+        self.setFilenamePattern=True
         self.scanexfiltrator = None
 
     def _file_start(self, path=None, force=False):
+        """
+        Starts file writing. If self.setFilenamePattern,
+        path should be something that can be formatted by datetime.strftime,
+        i.e., /nsls2/data/sst1/legacy/ucal/raw/%Y/%m/%d
+        This should certainly be the default, and file_start should not generally be called
+        with arguments
+        """
+        
         if path is None:
             path = self.path
         if self.state.get() == "no_file" or force:
-            self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off)
+            self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off, setFilenamePattern=self.setFilenamePattern)
         else:
             print("TES already has file open, not forcing!")
 
@@ -75,7 +84,7 @@ class TESBase(Device, RPCInterface):
         start_energy = scaninfo.get("start_energy", -1)
         if self.verbose: print(f"start scan {scan_num}")
         self.rpc.scan_start(var_name, var_unit, sample_id, sample_name, extra={"start_energy": start_energy})
-        
+
     def _scan_end(self):
         self.rpc.scan_end(_try_post_processing=False)
         self.scanexfiltrator = None
@@ -88,10 +97,11 @@ class TESBase(Device, RPCInterface):
         else:
             val = i
 
-        self.rpc.scan_point_start(val)
+        last_time = self.rpc.scan_point_start(val)['response']
+        self.last_time = float(last_time)
         ttime.sleep(self.acquire_time.get())
         self.rpc.scan_point_end()
-        self.last_time = ttime.time()
+        #self.last_time = ttime.time()
         status.set_finished()
         return
 
@@ -99,10 +109,18 @@ class TESBase(Device, RPCInterface):
         self.rpc.set_noise_triggers()
         if path is None:
             path = self.path
-        self.rpc.file_start(path, write_ljh=True, write_off=False)
+        self.rpc.file_start(path, write_ljh=True, write_off=False, setFilenamePattern=self.setFilenamePattern)
         ttime.sleep(time)
         self._file_end()
         self.rpc.set_pulse_triggers()
+
+    def take_projectors(self, path=None, time=60):
+        self.rpc.set_pulse_triggers()
+        if path is None:
+            path = self.path
+        self.rpc.file_start(path, write_ljh=True, write_off=False, setFilenamePattern=self.setFilenamePattern)
+        ttime.sleep(time)
+        self._file_end()
         
     def set_roi(self, label, llim, ulim):
         self.rois[label] = (llim, ulim)

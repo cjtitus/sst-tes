@@ -32,12 +32,13 @@ class TESROIBase(Device, RPCInterface):
             self.disable()
         else:
             self.enable()
-        
+
     def enable(self):
         self.kind = Kind.normal
 
     def disable(self):
         self.kind = Kind.omitted
+
 
 class TESROIext(TESROIBase):
     roi = Component(ExternalFileReference, shape=[], kind="normal")
@@ -45,7 +46,7 @@ class TESROIext(TESROIBase):
         super().__init__(*args, **kwargs)
         self._asset_docs_cache = deque()
         self._data_index = None
-        
+
     def stage(self):
         print("Staging", self.name)
         if self.kind == Kind.omitted:
@@ -82,7 +83,7 @@ class TESROIext(TESROIBase):
             self._asset_docs_cache.append(("datum", datum))
             self.roi.put(datum["datum_id"])
             return
-        
+
     def collect_asset_docs(self):
         items = list(self._asset_docs_cache)
         self._asset_docs_cache.clear()
@@ -106,27 +107,28 @@ class TES(TESBase):
                 val = rois[k]
                 d[key] = {"value": val, "timestamp": self.last_time}
         return d
-    
+
     def stage(self):
         if self.verbose: print("Staging TES")
         self._data_index = itertools.count()
         self._completion_status = DeviceStatus(self)
         self._external_devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)
                                   if hasattr(dev, 'collect_asset_docs')]
-        
+
         if self.file_mode == "start_stop":
             self._file_start()
 
         if self.state.get() == "no_file":
-            raise ValueError(f"{self.name} has no file open, cannot stage.")
-        
+            self._file_start()
+            # raise ValueError(f"{self.name} has no file open, cannot stage.")
+
         if self.cal_flag.get():
             self._calibration_start()
         else:
             self._scan_start()
 
         return super().stage()
-    
+
     def unstage(self):
         if self.verbose: print("Complete acquisition of TES")
         self._scan_end()
@@ -136,7 +138,8 @@ class TES(TESBase):
         self._data_index = None
         self._external_devices = None
         return super().unstage()
-    
+
+
 class OLDTES(Device, RPCInterface):
     _cal_flag = False
     _acquire_time = 1
@@ -300,7 +303,7 @@ class OLDTES(Device, RPCInterface):
     def stop(self):
         if self._completion_status is not None:
             self._completion_status.set_finished()
-            
+
 class SIMTES(TES):
     def __init__(self, name, motor, motor_field, *args, **kwargs):
         super().__init__(name=name, **kwargs)
