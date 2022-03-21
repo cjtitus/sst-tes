@@ -8,7 +8,7 @@ import itertools
 from os.path import join, relpath
 from .tes_signals import *
 from .rpc import RPCInterface
-from event_model import compose_resource
+
 
 class TESBase(Device, RPCInterface):
     _cal_flag = False
@@ -35,7 +35,7 @@ class TESBase(Device, RPCInterface):
         self.rois = {"tfy": (0, 1200)}
         self.last_time = 0
         self.path = path
-        self.setFilenamePattern=True
+        self.setFilenamePattern = True
         self.scanexfiltrator = None
 
     def _file_start(self, path=None, force=False):
@@ -46,7 +46,7 @@ class TESBase(Device, RPCInterface):
         This should certainly be the default, and file_start should not generally be called
         with arguments
         """
-        
+
         if path is None:
             path = self.path
         if self.state.get() == "no_file" or force:
