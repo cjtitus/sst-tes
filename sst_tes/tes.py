@@ -50,7 +50,8 @@ class TESBase(Device, RPCInterface):
         if path is None:
             path = self.path
         if self.state.get() == "no_file" or force:
-            self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off, setFilenamePattern=self.setFilenamePattern)
+            msg = self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off, setFilenamePattern=self.setFilenamePattern)
+            success = msg['success']
         else:
             print("TES already has file open, not forcing!")
 
@@ -83,10 +84,11 @@ class TESBase(Device, RPCInterface):
         sample_name = scaninfo.get("sample_name", 'null')
         start_energy = scaninfo.get("start_energy", -1)
         if self.verbose: print(f"start scan {scan_num}")
-        self.rpc.scan_start(var_name, var_unit, sample_id, sample_name, extra={"start_energy": start_energy})
-
+        msg = self.rpc.scan_start(var_name, var_unit, sample_id, sample_name, extra={"start_energy": start_energy})
+        
+        
     def _scan_end(self):
-        self.rpc.scan_end(_try_post_processing=False)
+        msg = self.rpc.scan_end(_try_post_processing=False)
         self.scanexfiltrator = None
 
     def _acquire(self, status, i):
@@ -121,6 +123,10 @@ class TESBase(Device, RPCInterface):
         self.rpc.file_start(path, write_ljh=True, write_off=False, setFilenamePattern=self.setFilenamePattern)
         ttime.sleep(time)
         self._file_end()
+        
+    def set_projectors(self):
+        msg = self.rpc.set_projectors()
+        return msg
         
     def set_roi(self, label, llim, ulim):
         self.rois[label] = (llim, ulim)
