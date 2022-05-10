@@ -7,7 +7,16 @@ from collections import OrderedDict, deque
 import itertools
 from os.path import join, relpath
 from .tes_signals import *
-from .rpc import RPCInterface
+from .rpc import RPCInterface, RPCException
+from functools import wraps
+
+
+@wraps
+def raiseOnFailure(f):
+    def _inner(*args, **kwargs):
+        response = f(*args, **kwargs)
+        if not response['success']:
+            raise RPCException(f"RPC failed with message {response['response']}")
 
 
 class TESBase(Device, RPCInterface):
@@ -16,6 +25,8 @@ class TESBase(Device, RPCInterface):
 
     cal_flag = Component(AttributeSignal, '_cal_flag', kind=Kind.config)
     acquire_time = Component(AttributeSignal, '_acquire_time', kind=Kind.config)
+    commStatus = Component(AttributeSignal, '_commStatus', kind=Kind.config)
+    connected = Component(AttributeSignal, '_connected', kind=Kind.config)
     filename = Component(RPCSignal, method="filename", kind=Kind.config)
     calibration = Component(RPCSignal, method='calibration_state', kind=Kind.config)
     state = Component(RPCSignal, method='state', kind=Kind.config)
@@ -37,7 +48,18 @@ class TESBase(Device, RPCInterface):
         self.path = path
         self.setFilenamePattern = True
         self.scanexfiltrator = None
+        self._commStatus = "Disconnected"
+        self._connected = False
 
+    def _commCheck(self):
+        try:
+            msg = self.rpc.commCheck()
+        except RPCException:
+            msg = {'success': False, 'response': 'Disconnected'}
+        self.connected = msg['success']
+        self.commStatus = msg['response']
+
+    @raiseOnFailure
     def _file_start(self, path=None, force=False):
         """
         Starts file writing. If self.setFilenamePattern,
@@ -51,12 +73,13 @@ class TESBase(Device, RPCInterface):
             path = self.path
         if self.state.get() == "no_file" or force:
             msg = self.rpc.file_start(path, write_ljh=self.write_ljh, write_off=self.write_off, setFilenamePattern=self.setFilenamePattern)
-            success = msg['success']
+            return msg
         else:
             print("TES already has file open, not forcing!")
+            return {"success": True, "response": "File already open"}
 
     def _file_end(self):
-        self.rpc.file_end()
+        return self.rpc.file_end()
 
     def _calibration_start(self):
         if self.scanexfiltrator is not None:
@@ -107,27 +130,32 @@ class TESBase(Device, RPCInterface):
         status.set_finished()
         return
 
+    @raiseOnFailure
     def take_noise(self, path=None, time=4):
         self.rpc.set_noise_triggers()
         if path is None:
             path = self.path
         self.rpc.file_start(path, write_ljh=True, write_off=False, setFilenamePattern=self.setFilenamePattern)
         ttime.sleep(time)
-        self._file_end()
+        msg = self._file_end()
         self.rpc.set_pulse_triggers()
+        return msg
 
+    @raiseOnFailure
     def take_projectors(self, path=None, time=60):
         self.rpc.set_pulse_triggers()
         if path is None:
             path = self.path
         self.rpc.file_start(path, write_ljh=True, write_off=False, setFilenamePattern=self.setFilenamePattern)
         ttime.sleep(time)
-        self._file_end()
-        
+        msg = self._file_end()
+        return msg
+
+    @raiseOnFailure
     def set_projectors(self):
         msg = self.rpc.set_projectors()
         return msg
-        
+
     def set_roi(self, label, llim, ulim):
         self.rois[label] = (llim, ulim)
         self.rpc.roi_set({label: (llim, ulim)})

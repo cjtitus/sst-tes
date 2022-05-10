@@ -2,6 +2,11 @@ from ophyd.ophydobj import OphydObject
 import json
 import socket
 
+
+class RPCException(Exception):
+    pass
+
+
 class RPCInterface(OphydObject):
     def __init__(self, *args, address="", port=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -43,7 +48,7 @@ class JSONClient:
         if kwargs is not None and kwargs != {}:
             msg["kwargs"] = kwargs
         return json.dumps(msg).encode()
-    
+
     def sendrcv(self, method, *params, **kwargs):
         msg = self.formatMsg(method, *params, **kwargs)
         s = socket.socket()

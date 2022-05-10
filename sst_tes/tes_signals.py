@@ -19,7 +19,7 @@ class RPCSignalPair(Signal, RPCInterface):
         response = r['response']
         success = r['success']
         return response
-        
+
     def put(self, value, **kwargs):
         if not self.write_access:
             raise ReadOnlyError("RPCSignal is marked as read-only")
