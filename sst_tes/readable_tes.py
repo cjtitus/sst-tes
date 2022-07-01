@@ -109,7 +109,8 @@ class TES(TESBase):
         return d
 
     def stage(self):
-        if self.verbose: print("Staging TES")
+        if self.verbose:
+            print("Staging TES")
         self._data_index = itertools.count()
         self._completion_status = DeviceStatus(self)
         self._external_devices = [dev for _, dev in self._get_components_of_kind(Kind.normal)

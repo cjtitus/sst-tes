@@ -9,27 +9,47 @@ import itertools
 import json
 from sst_tes.tes import TESBase
 
-class FlyableTES(TESBase):    
+
+class FlyableTES(TESBase):
+
+    def _scan(self):
+        # TES will send all data that hasn't been sent that
+        # is probably current.
+        # We need to ask TES for data, and increment counter for
+        # All data that is sent back
+        # We are done when we have as much data as was taken
+        while not self._collection_status.done:
+            try:
+                t = self._instructions.get(timeout=5)
+                event = dict()
+                event['time'] = ttime.time()
+                event['data'] = dict()
+                event['timestamps'] = dict()
+                rois = self.rpc.roi_get_counts()['response']
+                event['data']['tfy'] = rois['tfy']
+                event['timestamps']['tfy'] = t
+                self._data.put(event)
+                self._instructions.task_done()
+            except Empty:
+                if self.verbose:
+                    print("_scan timeout")
+                pass
+        if self.verbose:
+            print("Exiting _scan thread")
+
     def kickoff(self):
+        if self.file_mode == "start_stop":
+            self._file_start()
+
+        if self.state.get() == "no_file":
+            self._file_start()
+
         if self.cal_flag.get():
             self._calibration_start()
         else:
             self._scan_start()
-        return super().kickoff()
-
-    def complete(self):
-        if self.cal_flag.get():
-            self.cal_flag.set(False)
-        self._scan_end()
-        return super().complete()
-
-    
-    def kickoff(self):
-        if self.cal_flag.get():
-            self._calibration_start()
-        else:
-            self._scan_start()
-        if self.verbose: print("Kicking off TES")
+        if self.verbose:
+            print("Kicking off TES")
         self._data_index = itertools.count()
         if self._completion_status is not None and not self._completion_status.done:
             raise RuntimeError("Kicking off a second time?!")
@@ -37,8 +57,10 @@ class FlyableTES(TESBase):
         self._collection_status = DeviceStatus(device=self)
         self._data = Queue()
         self._instructions = Queue()
+
         def flyer_worker():
-            if self.verbose: print("Started flyer worker")
+            if self.verbose:
+                print("Started flyer worker")
             self._scan()
         threading.Thread(target=flyer_worker, daemon=True).start()
         kickoff_st = DeviceStatus(device=self)
@@ -48,9 +70,10 @@ class FlyableTES(TESBase):
     def complete(self):
         if self.cal_flag.get():
             self.cal_flag.set(False)
-        self.rpc.scan_end(_try_post_processing=False)
+        self._scan_end()
 
-        if self.verbose: print("Complete acquisition of TES")
+        if self.verbose:
+            print("Complete acquisition of TES")
         self._data_index = None
         if self._completion_status is None:
             raise RuntimeError("No collection in progress")
@@ -59,12 +82,14 @@ class FlyableTES(TESBase):
         return self._completion_status
 
     def collect(self):
-        if self.verbose: print("Collecting TES")
+        if self.verbose:
+            print("Collecting TES")
         t = ttime.time()
         self._instructions.put(t)
         data = []
         if self._completion_status.done:
-            if self.verbose: print("Joining Queue")
+            if self.verbose:
+                print("Joining Queue")
             self._instructions.join()
             self._collection_status.set_finished()
 
@@ -73,17 +98,19 @@ class FlyableTES(TESBase):
                 e = self._data.get_nowait()
                 data.append(e)
             except Empty:
-                if self.verbose: print("No more data in the queue")
+                if self.verbose:
+                    print("No more data in the queue")
                 break
         yield from data
-        
+
     def describe_collect(self):
-        if self.verbose: print("Describe collect for flyable TES")
+        if self.verbose:
+            print("Describe collect for flyable TES")
         dd = OrderedDict({'tfy': {'source': 'TES_Detector', 'dtype': 'number', 'shape': []}})
         return {self.name: dd}
-        
-            
 
+
+"""
 class SimFlyableTES(BaseFlyableTES):
 
     def __init__(self, name, *args, **kwargs):
@@ -103,15 +130,18 @@ class SimFlyableTES(BaseFlyableTES):
                 self._instructions.task_done()
             except Empty:
                 print("_scan timeout")
-                pass   
+                pass
 
     def _acquire(self, status, i):
-        if self.verbose: print("Triggering TES")
+        if self.verbose:
+            print("Triggering TES")
         ttime.sleep(self.acquire_time.get())
-        if self.verbose: print("Done Triggering")
+        if self.verbose:
+            print("Done Triggering")
         status.set_finished()
-        
-class FlyableTES(BaseFlyableTES):
+
+
+class OldFlyableTES(BaseFlyableTES):
     #calibrating = Component(Signal, kind='config', value=False)
     filename = Component(RPCSignal, rpc_method="filename", kind=Kind.config)
     calibration = Component(RPCSignal, rpc_method='calibration_state', kind=Kind.config)
@@ -128,14 +158,14 @@ class FlyableTES(BaseFlyableTES):
             msg["params"] = params
         return json.dumps(msg).encode()
 
-    """
+
     def _send(self, method, *params):
         msg = self._formatMsg(method, params)
         s = socket.socket()
         s.connect((self.address, self.port))
         s.send(msg)
         s.close()
-    """
+
     
     def _sendrcv(self, method, *params):
         msg = self._formatMsg(method, params)
@@ -160,8 +190,10 @@ class FlyableTES(BaseFlyableTES):
         sample_name = self._log.get('sample_desc', 'sample')
         extra = self._log.get('extra', {})
         routine = 'ssrl_10_1_mix'
-        if self.verbose: print(f"start calibration scan {scan_num}")
-        self._sendrcv("calibration_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none', routine)
+        if self.verbose:
+            print(f"start calibration scan {scan_num}")
+        self._sendrcv("calibration_start", var_name, var_unit, scan_num,
+                      sample_id, sample_name, extra, 'none', routine)
 
     def _scan_start(self):
         var_name = self._log.get('var_name', 'mono')
@@ -170,8 +202,10 @@ class FlyableTES(BaseFlyableTES):
         sample_id = self._log.get('sample_id', 1)
         sample_name = self._log.get('sample_desc', 'sample')
         extra = self._log.get('extra', {})
-        if self.verbose: print(f"start scan {scan_num}")
-        self._sendrcv("scan_start", var_name, var_unit, scan_num, sample_id, sample_name, extra, 'none')        
+        if self.verbose:
+            print(f"start scan {scan_num}")
+        self._sendrcv("scan_start", var_name, var_unit, scan_num,
+                      sample_id, sample_name, extra, 'none')
 
     def _scan_point_start(self, var_val, t, extra={}):
         self._sendrcv("scan_point_start", var_val, extra, t)
@@ -209,9 +243,9 @@ class FlyableTES(BaseFlyableTES):
                 self._data.put(event)
                 self._instructions.task_done()
             except Empty:
-                if self.verbose: print("_scan timeout")
-                pass   
-        if self.verbose: print("Exiting _scan thread")
-        
-
-
+                if self.verbose:
+                    print("_scan timeout")
+                pass
+        if self.verbose:
+            print("Exiting _scan thread")
+"""

@@ -178,7 +178,8 @@ class TESBase(Device, RPCInterface):
         return self._hints
 
     def trigger(self):
-        if self.verbose: print("Triggering TES")
+        if self.verbose:
+            print("Triggering TES")
         status = DeviceStatus(self)
         i = next(self._data_index)
         threading.Thread(target=self._acquire, args=(status, i), daemon=True).start()
